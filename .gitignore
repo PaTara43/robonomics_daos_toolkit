@@ -1,2 +1,5 @@
 venv
 daemon.log
+acl.yaml
+.idea
+__pychache__
