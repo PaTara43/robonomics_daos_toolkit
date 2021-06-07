@@ -13,7 +13,7 @@ import time
 logging.basicConfig(
     level=logging.DEBUG,
     filename="daemon.log",
-    format="%(asctime)s %(levelname)s: %(message)s"
+    format="%(asctime)s %(levelname)s: %(message)s",
 )
 
 
@@ -23,9 +23,7 @@ class ACL:
     address specified in DT mapping
     """
 
-    def __init__(
-            self, config: tp.Dict[str, tp.Any]
-    ) -> None:
+    def __init__(self, config: tp.Dict[str, tp.Any]) -> None:
         """
         Create an instance of a class, set its acl attribute as a list of allowed addresses and start a daemon,
         handling updates in datalog of the acl holder address
@@ -37,10 +35,10 @@ class ACL:
 
         logging.info("initializing ACL instance")
         # connect to substrate node with specified parameters
-        self.substrate = subcon.substrate_connection(config['substrate'])
-        self.acl_host_addr: str = self._get_acl_host_addr(config['acl']['dt_id'],
-                                                          config['acl']['acl_topic_name']
-                                                          )
+        self.substrate = subcon.substrate_connection(config["substrate"])
+        self.acl_host_addr: str = self._get_acl_host_addr(
+            config["acl"]["dt_id"], config["acl"]["acl_topic_name"]
+        )
 
         # The following three functions are to be used in daemon, so they are not exiting if something's wrong,
         # exiting conditions are so defined here, in init script
@@ -53,7 +51,9 @@ class ACL:
 
         logging.info("initialized acl instance")
         # stat datalog updates handler
-        self.datalog_updates_handler = threading.Thread(target=self._handle_datalog_updates)
+        self.datalog_updates_handler = threading.Thread(
+            target=self._handle_datalog_updates
+        )
         self.datalog_updates_handler.start()
         logging.info("Started datalog update daemon")
 
@@ -72,19 +72,15 @@ class ACL:
         """
 
         try:
-            digital_twin = self.substrate.query(
-                'DigitalTwin',
-                'DigitalTwin',
-                [dt_id]
-            )
+            digital_twin = self.substrate.query("DigitalTwin", "DigitalTwin", [dt_id])
             dt_map = digital_twin.value
-            logging.info(f'Fetched DT map.\n{dt_map}')
+            logging.info(f"Fetched DT map.\n{dt_map}")
         except Exception as E:
             logging.error(f"Failed to fetch DT map. Exiting. Error:\n {E}")
             sys.exit()
 
         # since topic names in robonomics are represented as bytes (of wtf ScaleBytes is), create corresponding number
-        acl_topic_h256 = str(ScaleBytes(acl_topic_name.encode('utf-8')))
+        acl_topic_h256 = str(ScaleBytes(acl_topic_name.encode("utf-8")))
         addr = None
         for i in range(len(dt_map)):
             if dt_map[i][0] == acl_topic_h256:
@@ -106,19 +102,16 @@ class ACL:
 
         try:
             # Get all records
-            datalog = self.substrate.query_map(
-                'Datalog',
-                'DatalogItem'
-            )
+            datalog = self.substrate.query_map("Datalog", "DatalogItem")
             addr_datalog = []
 
             # Find only host address datalogs
             for i in datalog.records:
                 addr_datalog.append(i[1].value) if i[0].value[0] == self.acl_host_addr else None
             # Sort them by timestamp
-            addr_datalog_sorted = sorted(addr_datalog, key=lambda log: log['timestamp'])
+            addr_datalog_sorted = sorted(addr_datalog, key=lambda log: log["timestamp"])
             logging.info(f"All records of this account:\n{addr_datalog_sorted}")
-            hash = addr_datalog_sorted[-1]['payload']
+            hash = addr_datalog_sorted[-1]["payload"]
             logging.info(f"Latest record: {hash}")
 
             if "Qm" not in hash:
@@ -141,22 +134,22 @@ class ACL:
 
         # initial check if there is a hash
         if not self.acl_hash:
-            return ''
+            return ""
         try:
-            logging.info('Connecting to IPFS')
+            logging.info("Connecting to IPFS")
             client = ipfshttpclient.connect()
-            name = 'acl.yaml'
-            logging.info('Fetching acl file')
+            name = "acl.yaml"
+            logging.info("Fetching acl file")
 
             client.get(self.acl_hash)
-            logging.info('Successfully fetched acl file')
+            logging.info("Successfully fetched acl file")
             client.close()
             rename(self.acl_hash, name)
             return name
         except Exception as E:
-            logging.error(f'Failed to fetch acl file. Error {E}')
+            logging.error(f"Failed to fetch acl file. Error {E}")
             client.close()
-            return ''
+            return ""
 
     def _read_acl_f(self) -> tp.List[str]:
         """
@@ -168,7 +161,7 @@ class ACL:
         """
 
         # initial check if there is a file
-        if self.acl_f == '' or not path.exists(self.acl_f):
+        if self.acl_f == "" or not path.exists(self.acl_f):
             logging.error(f"acl file {self.acl_f} not found")
             return []
         logging.info(f"Acl file: {self.acl_f}")
@@ -196,12 +189,17 @@ class ACL:
             for e in events:
                 if e.value["event_id"] == "NewRecord":
                     for p in e.params:
-                        if p["type"] == "AccountId" and p["value"] == self.acl_host_addr:
+                        if (
+                            p["type"] == "AccountId"
+                            and p["value"] == self.acl_host_addr
+                        ):
                             self.acl_hash: str = self._get_acl_hash()
                             self.acl_f: str = self._fetch_acl()
                             acl_new: tp.List[str] = self._read_acl_f()
                             if not acl_new:
-                                logging.error(f"No acl or acl empty, keeping old acl...")
+                                logging.error(
+                                    f"No acl or acl empty, keeping old acl..."
+                                )
                             else:
                                 self.acl = acl_new
                                 time.sleep(1)
@@ -233,5 +231,5 @@ if __name__ == "__main__":
         except Exception as Err:
             logging.error(f"Error loading config.yaml: {Err}")
 
-    acl_obj = ACL(config_g['robonomics'])
+    acl_obj = ACL(config_g["robonomics"])
     print(acl_obj.acl)
