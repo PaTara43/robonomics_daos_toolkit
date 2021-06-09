@@ -1,13 +1,15 @@
-import typing as tp
 import ipfshttpclient
-import yaml
-import substrate_connection as subcon
 import logging
-from os import path, rename
-import threading
+import substrate_connection as subcon
 import sys
-from scalecodec import ScaleBytes
+import threading
 import time
+import typing as tp
+import yaml
+
+from os import path, rename
+from scalecodec import ScaleBytes
+
 
 # set up logging
 logging.basicConfig(
