@@ -1,6 +1,5 @@
 import ipfshttpclient
 import logging
-import substrate_connection as subcon
 import sys
 import threading
 import time
@@ -9,7 +8,6 @@ import yaml
 
 from os import path, rename
 from scalecodec import ScaleBytes
-
 
 # set up logging
 logging.basicConfig(
@@ -224,6 +222,8 @@ if __name__ == "__main__":
 
     """load up the configuration file"""
 
+    import substrate_connection as subcon
+
     if not path.exists("config.yaml"):
         logging.error("config.yaml not found")
 
@@ -235,3 +235,5 @@ if __name__ == "__main__":
 
     acl_obj = ACL(config_g["robonomics"])
     print(acl_obj.acl)
+else:
+    from robonomics_daos_toolkit import substrate_connection as subcon
