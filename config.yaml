@@ -1,7 +1,16 @@
-robonomics:
+use_daos_toolkit: true
+daos_toolkit:
   substrate:
-    url: "ws://127.0.0.1:9944"
+    url: ""
+  dt_id: ''
+  device_topic_name: ''
+  device_account_mnemonic: '' #to be used in logging
+  use_acl: true
   acl:
-    dt_id: '0'
-    acl_topic_name: 'acl_____________________________'
-    logs_topic_name: 'logs____________________________'
+    acl_topic_name: ''
+  use_action_logger: true
+  action_logger:
+    use_pinata: true
+    pinata:
+      api: ""
+      secret_api: ""

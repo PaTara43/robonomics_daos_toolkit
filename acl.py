@@ -11,7 +11,7 @@ from scalecodec import ScaleBytes
 
 # set up logging
 logging.basicConfig(
-    level=logging.DEBUG,
+    level=logging.INFO,
     filename="daemon.log",
     format="%(asctime)s %(levelname)s: %(message)s",
 )
@@ -23,7 +23,7 @@ class ACL:
     address specified in DT mapping
     """
 
-    def __init__(self, config: tp.Dict[str, tp.Any]) -> None:
+    def __init__(self, config: tp.Dict[str, tp.Any], substrate) -> None:
         """
         Create an instance of a class, set its acl attribute as a list of allowed addresses and start a daemon,
         handling updates in datalog of the acl holder address
@@ -31,13 +31,14 @@ class ACL:
         Parameters
         ----------
         config : configuration dict to work with robonomics
+        substrate: object representing connection to substrate
         """
 
         logging.info("initializing ACL instance")
         # connect to substrate node with specified parameters
-        self.substrate = subcon.substrate_connection(config["substrate"])
+        self.substrate = substrate
         self.acl_host_addr: str = self._get_acl_host_addr(
-            config["acl"]["dt_id"], config["acl"]["acl_topic_name"]
+            config["dt_id"], config["acl"]["acl_topic_name"]
         )
 
         # The following three functions are to be used in daemon, so they are not exiting if something's wrong,
@@ -75,6 +76,9 @@ class ACL:
             digital_twin = self.substrate.query("DigitalTwin", "DigitalTwin", [dt_id])
             dt_map = digital_twin.value
             logging.info(f"Fetched DT map.\n{dt_map}")
+            if not dt_map:
+                logging.error(f"No DT maf for this DT or no DT. Exiting")
+                sys.exit()
         except Exception as E:
             logging.error(f"Failed to fetch DT map. Exiting. Error:\n {E}")
             sys.exit()
@@ -232,8 +236,6 @@ if __name__ == "__main__":
             config_g = yaml.safe_load(file)
         except Exception as Err:
             logging.error(f"Error loading config.yaml: {Err}")
-
-    acl_obj = ACL(config_g["robonomics"])
+    substrate = subcon.substrate_connection(config_g["daos_toolkit"]["substrate"])
+    acl_obj = ACL(config_g["daos_toolkit"], substrate)
     print(acl_obj.acl)
-else:
-    from robonomics_daos_toolkit import substrate_connection as subcon
