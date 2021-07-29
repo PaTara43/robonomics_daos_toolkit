@@ -1,17 +1,7 @@
-import ipfshttpclient
 import logging
-import pathlib
-import sys
 import typing as tp
-import yaml
 
 from datetime import datetime as dt
-from pinatapy import PinataPy
-from scalecodec import ScaleBytes
-from substrateinterface import Keypair
-
-from os import remove, path
-
 
 # set up logging
 logging.basicConfig(
@@ -23,33 +13,18 @@ logging.basicConfig(
 
 class ActionLogger:
 
-    def __init__(self, config: tp.Dict[str, tp.Any], substrate_g) -> None:
+    def __init__(self, config: tp.Dict[str, tp.Any], substrate) -> None:
         """
         Creates a template dictionary with timestamp, action description  and status. This dictionary is to be
         updated later. Also connects to pinata if required.
 
         @param config: global configuration dictionary
-        @param substrate_g: object representing connection to substrate
+        @param substrate: object representing connection to substrate
         """
 
         logging.info("Initializing action logger")
         self.config = config
-        self.path = pathlib.Path().resolve()
-        logging.info("Initializing substrate connection")
-        self.substrate = substrate_g
-        # Add key
-        self.keypair = Keypair.create_from_mnemonic(config["device_account_mnemonic"], ss58_format=32)
-        self._check_if_mnemonic_of_device()
-
-        if config["action_logger"]["use_pinata"]:
-            pinata_api = self.config["action_logger"]["pinata"]["api"]
-            pinata_secret_api = self.config["action_logger"]["pinata"]["secret_api"]
-            if pinata_api and pinata_secret_api:
-                self.pinata = PinataPy(pinata_api, pinata_secret_api)
-            else:
-                logging.error("No pinata api data passed")
-                sys.exit()
-
+        self.substrate = substrate
         self.action_log: tp.Dict = {
             "action": {
                 "description": "",
@@ -59,7 +34,15 @@ class ActionLogger:
         }
         self.log_hash: str = ""
         self.timestamp: str = ""
-        logging.info("Initialized action log")
+        # Check if seed and device account address from DT correspond
+        logging.info("Check correspondence of seed and address")
+        device_addr = cu.get_topic_addr(self.substrate, self.config["dt_id"], self.config["device_topic_name"])
+        if cu.seed_to_account_corresponding(self.config["device_account_mnemonic"], device_addr):
+            logging.info("Seed corresponds to account from DT topic " + self.config["device_topic_name"])
+        else:
+            logging.warning("Seed doesn't correspond to account from DT topic " + self.config["device_topic_name"])
+
+        logging.info("Initialized action logger")
 
     def log_action(self, action: str, status: str) -> None:
         """
@@ -98,120 +81,36 @@ class ActionLogger:
         """save a YAML log; push it to local IPFS; pinata, if required; remove; send hash to Robonomics"""
 
         # save YAML file
-        try:
-            log_file = open(f"{self.path}/log_{self.timestamp}.yaml", "w")
-            yaml.dump(self.action_log, log_file)
-            logging.info("YAML session log saved")
-        except Exception as e:
-            logging.error(f"Failed to save log file. Error: {e}")
-            log_file.close()
-            pass
+        log_file = cu.write_yaml_file(self.action_log, f"log_{self.timestamp}.yaml")
 
         # push log to ipfs
-        try:
-            ipfs_client = ipfshttpclient.connect()
-            res = ipfs_client.add(f"{self.path}/log_{self.timestamp}.yaml")
-            self.log_hash = res["Hash"]
-            log_file.close()
-            logging.info(f"Log pushed to IPFS. Hash is {self.log_hash}")
-        except Exception as e:
-            logging.error(f"Failed to push file to local IPFS node. Error: {e}")
-            log_file.close()
-
-        # pinning file to pinata
         if self.config["action_logger"]["use_pinata"]:
-            try:
-                self.pinata.pin_file_to_ipfs(f"{self.path}/log_{self.timestamp}.yaml")
-                self.log_hash = self.pinata.pin_list()["rows"][0]["ipfs_pin_hash"]
-                logging.info(f"Log sent to pinata. Hash is {self.log_hash}")
-            except Exception as e:
-                logging.error(f"Failed to pin file to Pinata. Error: {e}")
-
-        # remove log file to save space
-        try:
-            remove(f"./log_{self.timestamp}.yaml")
-            logging.info("Log file removed")
-        except Exception as e:
-            logging.error(f"Failed to remove log file: {e}")
+            self.log_hash = cu.pin_file_in_ipfs(log_file, pinata_api=self.config["action_logger"]["pinata"]["api"],
+                                                pinata_secret=self.config["action_logger"]["pinata"]["secret_api"],
+                                                remove_after=True)
+        else:
+            self.log_hash = cu.pin_file_in_ipfs(log_file, remove_after=True)
 
         # pushing hash to robonomics
-        try:
-            logging.info("Creating substrate call")
-            call = self.substrate.compose_call(
-                call_module="Datalog",
-                call_function="record",
-                call_params={
-                    'record': self.log_hash
-                }
-            )
-            logging.info(f"Successfully created a call:\n{call}")
-            logging.info("Creating extrinsic")
-            extrinsic = self.substrate.create_signed_extrinsic(call=call, keypair=self.keypair)
-            logging.info("Submitting extrinsic")
-        except Exception as e:
-            logging.error(f"Failed to create a call: {e}")
-            pass
-
-        try:
-            receipt = self.substrate.submit_extrinsic(extrinsic, wait_for_inclusion=True)
-            logging.info(f"Extrinsic {receipt.extrinsic_hash} sent and included in block {receipt.extrinsic_hash}")
-        except Exception as e:
-            logging.error(f"Failed to send: {e}")
-
-    def _check_if_mnemonic_of_device(self) -> bool:
-        """
-
-        check if mnemonic seed corresponds to device account address, specified in Digital Twin. Provide warnings.
-        @return: true or false if mnemonic seed corresponds device address or not (failed to check)
-
-        """
-
-        try:
-            logging.info("Checking mnemonics seed correspondence to account address in DT")
-            digital_twin = self.substrate.query("DigitalTwin", "DigitalTwin", [self.config["dt_id"]])
-            dt_map: tp.List = digital_twin.value
-            logging.info(f"Fetched DT map.\n{dt_map}")
-            if not dt_map:
-                logging.warning(f"No DT map for this DT or no DT. Can't check correspondence")
-                return False
-        except Exception as E:
-            logging.warning(f"Failed to fetch DT map. Can't check correspondence. Error:\n {E}")
-            return False
-
-        # since topic names in robonomics are represented as bytes (of wtf ScaleBytes is), create corresponding number
-        device_topic_h256 = str(ScaleBytes(self.config["device_topic_name"].encode("utf-8")))
-        addr = None
-        for i in range(len(dt_map)):
-            if dt_map[i][0] == device_topic_h256:
-                addr = dt_map[i][1]
-
-        if not addr:
-            logging.warning(f"No topic {device_topic_h256} found in DT. Can't check correspondence")
-            return False
-
-        logging.info(f"Device address from DT is {addr}")
-        logging.info(f"Mnemonic seed address: {self.keypair.ss58_address}")
-        # Compare addresses
-        if self.keypair.ss58_address == addr:
-            logging.info("Mnemonic seed address corresponds with device address in DT")
-            return True
+        if self.log_hash:
+            cu.write_datalog(self.substrate, self.config["device_account_mnemonic"], self.log_hash)
         else:
-            logging.warning("Mnemonic seed address doesn't correspond with device address in DT")
-            return False
+            logging.error("Empty log_hash. Not sending to blockchain")
 
 
 if __name__ == "__main__":
 
-    import substrate_connection as subcon
+    import common_utils as cu
 
-    if not path.exists("config.yaml"):
-        logging.error("config.yaml not found")
+    config = cu.read_yaml_file("config.yaml")["daos_toolkit"]
+    substrate = cu.substrate_connection(config["substrate"])
 
-    with open("config.yaml", "r") as file:
-        try:
-            config_g = yaml.safe_load(file)
-        except Exception as Err:
-            logging.error(f"Error loading config.yaml: {Err}")
-    substrate = subcon.substrate_connection(config_g["daos_toolkit"]["substrate"])
-    action_logger = ActionLogger(config_g["daos_toolkit"], substrate)
+    action_logger = ActionLogger(config, substrate)
     action_logger.log_action("action1", "status1")
+
+    addr = cu.get_topic_addr(substrate, config["dt_id"], config["device_topic_name"])
+    hash = cu.get_latest_datalog(substrate, addr)  # go to IPFS gateway and see record of action1 status1
+    print(hash)
+
+else:
+    from robonomics_daos_toolkit import common_utils as cu

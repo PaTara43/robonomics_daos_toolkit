@@ -1,13 +1,7 @@
-import ipfshttpclient
 import logging
 import sys
 import threading
-import time
 import typing as tp
-import yaml
-
-from os import path, rename
-from scalecodec import ScaleBytes
 
 # set up logging
 logging.basicConfig(
@@ -36,179 +30,60 @@ class ACL:
 
         logging.info("initializing ACL instance")
         # connect to substrate node with specified parameters
+        self.config = config
         self.substrate = substrate
-        self.acl_host_addr: str = self._get_acl_host_addr(
-            config["dt_id"], config["acl"]["acl_topic_name"]
-        )
+        self.acl_host_addr: str = cu.get_topic_addr(self.substrate,
+                                                    self.config["dt_id"], self.config["acl"]["acl_topic_name"]
+                                                    )
+        if not self.acl_host_addr:
+            sys.exit()
 
         # The following three functions are to be used in daemon, so they are not exiting if something's wrong,
         # exiting conditions are so defined here, in init script
-        self.acl_hash: str = self._get_acl_hash()
-        self.acl_f: str = self._fetch_acl()
-        self.acl: tp.List[str] = self._read_acl_f()
+        self.acl_hash: str = cu.get_latest_datalog(self.substrate, self.acl_host_addr)
+        self.acl_f: str = cu.fetch_file_from_ipfs(self.acl_hash, "acl.yaml")
+        self.acl: tp.List[str] = cu.read_yaml_file(self.acl_f)["allowed_ids"]
         if not self.acl:
             logging.error(f"No acl or acl empty, exiting...")
             sys.exit()
 
-        logging.info("initialized acl instance")
+        logging.info(f"Initialized acl instance. ACL: \n{self.acl}")
         # stat datalog updates handler
-        self.datalog_updates_handler = threading.Thread(
-            target=self._handle_datalog_updates
-        )
-        self.datalog_updates_handler.start()
-        logging.info("Started datalog update daemon")
+        logging.info("Starting datalog update daemon")
+        subscriber = threading.Thread(target=self._datalog_subscriber)
+        subscriber.start()
 
-    def _get_acl_host_addr(self, dt_id: int, acl_topic_name: str) -> str:
+    def _datalog_subscriber(self):
         """
-        Find a host address, which datalog stores IPFS hash of an acl. Address is specified in Digital Twin
-
-        Parameters
-        ----------
-        dt_id : digital twin id of a device
-        acl_topic_name : topic name, where the address for obtaining acl is stored
-
-        Returns
-        -------
-        address in robonomics network, which datalog is to be used for retrieving IPFS hash of an acl
+        Tread func to subscribe to datalog updates
+        more: https://github.com/polkascan/py-substrate-interface#storage-subscriptions
         """
 
         try:
-            digital_twin = self.substrate.query("DigitalTwin", "DigitalTwin", [dt_id])
-            dt_map = digital_twin.value
-            logging.info(f"Fetched DT map.\n{dt_map}")
-            if not dt_map:
-                logging.error(f"No DT maf for this DT or no DT. Exiting")
-                sys.exit()
-        except Exception as E:
-            logging.error(f"Failed to fetch DT map. Exiting. Error:\n {E}")
-            sys.exit()
+            self.substrate.query("Datalog", "DatalogIndex", [self.acl_host_addr],
+                                 subscription_handler=self._handle_datalog_updates)
+        except Exception as e:
+            logging.error(f"Daemon exited. {e}")
 
-        # since topic names in robonomics are represented as bytes (of wtf ScaleBytes is), create corresponding number
-        acl_topic_h256 = str(ScaleBytes(acl_topic_name.encode("utf-8")))
-        addr = None
-        for i in range(len(dt_map)):
-            if dt_map[i][0] == acl_topic_h256:
-                addr = dt_map[i][1]
-        if not addr:
-            logging.critical(f"No topic {acl_topic_name} found in DT. Exiting")
-            sys.exit()
-        logging.info(f"Acl host address is {addr}")
-        return addr
-
-    def _get_acl_hash(self) -> str:
+    def _handle_datalog_updates(self, datalog_obj, update_nr, subscription_id):
         """
-        get an IPFS hash of the acl file from host address latest datalog. If no IPFS hash in datalog, exit
-
-        Returns
-        -------
-        IPFS hash of an acl file. None if failure
+        Process updates in account datalog records number: Read new latest datalog and obtain ACL
+        more: https://github.com/polkascan/py-substrate-interface#storage-subscriptions
         """
 
-        try:
-            # Get all records
-            datalog = self.substrate.query_map("Datalog", "DatalogItem")
-            addr_datalog = []
+        if update_nr != 0:  # called not when subscriber is created
+            logging.info(f"New record in datalog")
+            self.acl_hash: str = cu.get_latest_datalog(self.substrate, self.acl_host_addr)
+            self.acl_f: str = cu.fetch_file_from_ipfs(self.acl_hash, "acl.yaml")
+            new_acl: tp.List[str] = cu.read_yaml_file(self.acl_f)["allowed_ids"]
+            if not new_acl:
+                logging.error(f"ACL not updated. Got None. Keeping old ACL \n{self.acl}")
+            else:
+                self.acl = new_acl
+                logging.info(f"Updated ACL. New ACL is: \n {self.acl}")
 
-            # Find only host address datalogs
-            for i in datalog.records:
-                addr_datalog.append(i[1].value) if i[0].value[0] == self.acl_host_addr else None
-            # Sort them by timestamp
-            addr_datalog_sorted = sorted(addr_datalog, key=lambda log: log["timestamp"])
-            logging.info(f"All records of this account:\n{addr_datalog_sorted}")
-            hash = addr_datalog_sorted[-1]["payload"]
-            logging.info(f"Latest record: {hash}")
-
-            if "Qm" not in hash:
-                logging.critical(f"No IPFS hash found in {self.acl_host_addr} datalog")
-                hash = None
-        except Exception as E:
-            logging.error(f"Failed to fetch hash from acl host datalog. Error:\n {E}")
-            hash = None
-
-        return hash
-
-    def _fetch_acl(self) -> str:
-        """
-        Fetch file from IPFS
-
-        Returns
-        -------
-        acl filename. None if failure
-        """
-
-        # initial check if there is a hash
-        if not self.acl_hash:
-            return ""
-        try:
-            logging.info("Connecting to IPFS")
-            client = ipfshttpclient.connect()
-            name = "acl.yaml"
-            logging.info("Fetching acl file")
-
-            client.get(self.acl_hash)
-            logging.info("Successfully fetched acl file")
-            client.close()
-            rename(self.acl_hash, name)
-            return name
-        except Exception as E:
-            logging.error(f"Failed to fetch acl file. Error {E}")
-            client.close()
-            return ""
-
-    def _read_acl_f(self) -> tp.List[str]:
-        """
-        load up an acl
-
-        Returns
-        -------
-        List with every allowed ID. None if failure
-        """
-
-        # initial check if there is a file
-        if self.acl_f == "" or not path.exists(self.acl_f):
-            logging.error(f"acl file {self.acl_f} not found")
-            return []
-        logging.info(f"Acl file: {self.acl_f}")
-
-        with open(self.acl_f, "r") as r_file:
-            try:
-                acl = yaml.safe_load(r_file)["allowed_ids"]
-                print(acl)
-                return acl
-                # return yaml.safe_load(r_file)["allowed_ids"]
-            except Exception as E:
-                logging.error(f"Error loading acl: {E}")
-                return []
-
-    def _handle_datalog_updates(self):
-        """
-        monitor events in network and parse them to find new records in datalog. If so, update acl
-        """
-
-        while True:
-            ch = self.substrate.get_chain_head()
-            # print(f"Chain head: {ch}")
-
-            events = self.substrate.get_events(ch)
-            for e in events:
-                if e.value["event_id"] == "NewRecord":
-                    for p in e.params:
-                        if (
-                            p["type"] == "AccountId"
-                            and p["value"] == self.acl_host_addr
-                        ):
-                            self.acl_hash: str = self._get_acl_hash()
-                            self.acl_f: str = self._fetch_acl()
-                            acl_new: tp.List[str] = self._read_acl_f()
-                            if not acl_new:
-                                logging.error(
-                                    f"No acl or acl empty, keeping old acl..."
-                                )
-                            else:
-                                self.acl = acl_new
-                                time.sleep(1)
-
-            time.sleep(1.9)
+        else:
+            pass
 
     def usage_allowed(self, user_id: str) -> bool:
         """
@@ -224,18 +99,12 @@ class ACL:
 
 if __name__ == "__main__":
 
-    """load up the configuration file"""
+    import common_utils as cu
 
-    import substrate_connection as subcon
+    config = cu.read_yaml_file("config.yaml")["daos_toolkit"]
+    substrate = cu.substrate_connection(config["substrate"])
 
-    if not path.exists("config.yaml"):
-        logging.error("config.yaml not found")
-
-    with open("config.yaml", "r") as file:
-        try:
-            config_g = yaml.safe_load(file)
-        except Exception as Err:
-            logging.error(f"Error loading config.yaml: {Err}")
-    substrate = subcon.substrate_connection(config_g["daos_toolkit"]["substrate"])
-    acl_obj = ACL(config_g["daos_toolkit"], substrate)
+    acl_obj = ACL(config, substrate)
     print(acl_obj.acl)
+else:
+    from robonomics_daos_toolkit import common_utils as cu

@@ -1,16 +1,19 @@
-use_daos_toolkit: true
+use_daos_toolkit: true # mostly yes, that's why you are here
 daos_toolkit:
   substrate:
-    url: ""
-  dt_id: ''
-  device_topic_name: ''
-  device_account_mnemonic: '' #to be used in logging
-  use_acl: true
+    url: "" # socket url to connect to. "ws://127.0.0.1:9944" for local node
+  dt_id: '' # id of the device digital twin
+  device_topic_name: '' # digital twin topic, corresponding to device address
+  device_account_mnemonic: '' # to be used in logging for signing transactions
+  use_acl: true # whether use access control list or not
   acl:
-    acl_topic_name: ''
-  use_action_logger: true
+    acl_topic_name: '' # digital twin topic, corresponding to acl host address (which datalog contains IPFS hash to acl)
+  use_action_logger: true # whether use logger or not
   action_logger:
-    use_pinata: true
+    use_pinata: true # pin file in Pinata or local IPFS node only
     pinata:
-      api: ""
-      secret_api: ""
+      api: "" # Pinata credentials
+      secret_api: "" # Pinata credentials
+  use_income_tracker: true # whether check incomes or not
+  income_tracker:
+    income_threshold: # float. When income is more than the threshold, python event is set

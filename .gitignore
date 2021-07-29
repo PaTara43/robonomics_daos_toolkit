@@ -2,6 +2,6 @@ venv
 daemon.log
 acl.yaml
 .idea
-__pychache__
+__pychache__*
 config_0.yaml
 config_filled.yaml
