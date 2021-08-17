@@ -14,6 +14,10 @@ logging.basicConfig(
     filename="daemon.log",
     format="%(asctime)s %(levelname)s: %(message)s",
 )
+# logging.basicConfig(
+#     level=logging.INFO,
+#     format="%(asctime)s %(levelname)s: %(message)s",
+# )
 
 
 def read_yaml_file(yaml_path: str) -> tp.Dict or None:
@@ -86,6 +90,7 @@ def substrate_connection(substrate_node_config: tp.Dict[str, tp.Any]) -> tp.Any:
             type_registry={
                 "types": {
                     "Record": "Vec<u8>",
+                    "Parameter": "Bool",
                     "<T as frame_system::Config>::AccountId": "AccountId",
                     "RingBufferItem": {
                         "type": "struct",
@@ -195,7 +200,7 @@ def seed_to_account_corresponding(seed: str, addr: str) -> bool:
     return addr == keypair.ss58_address
 
 
-def write_datalog(substrate, seed, data: str) -> str or None:
+def write_datalog(substrate, seed: str, data: str) -> str or None:
     """
     Write any string to datalog
 
@@ -214,11 +219,11 @@ def write_datalog(substrate, seed, data: str) -> str or None:
     try:
         keypair = Keypair.create_from_mnemonic(seed, ss58_format=32)
     except Exception as e:
-        logging.error(f"Failed to create keypair: \n{e}")
+        logging.error(f"Failed to create keypair for recording datalog: \n{e}")
         return None
 
     try:
-        logging.info("Creating substrate call")
+        logging.info("Creating substrate call for recording datalog")
         call = substrate.compose_call(
             call_module="Datalog",
             call_function="record",
@@ -226,20 +231,70 @@ def write_datalog(substrate, seed, data: str) -> str or None:
                 'record': data
             }
         )
-        logging.info(f"Successfully created a call:\n{call}")
-        logging.info("Creating extrinsic")
+        logging.info(f"Successfully created a call for recording datalog:\n{call}")
+        logging.info("Creating extrinsic for recording datalog")
         extrinsic = substrate.create_signed_extrinsic(call=call, keypair=keypair)
     except Exception as e:
-        logging.error(f"Failed to create an extrinsic: {e}")
+        logging.error(f"Failed to create an extrinsic for recording datalog: {e}")
         return None
 
     try:
-        logging.info("Submitting extrinsic")
+        logging.info("Submitting extrinsic for recording datalog")
         receipt = substrate.submit_extrinsic(extrinsic, wait_for_inclusion=True)
-        logging.info(f"Extrinsic {receipt.extrinsic_hash} sent and included in block {receipt.extrinsic_hash}")
+        logging.info(f"Extrinsic {receipt.extrinsic_hash} for recording datalog sent and included in block {receipt.extrinsic_hash}")
         return receipt.extrinsic_hash
     except Exception as e:
-        logging.error(f"Failed to submit extrinsic: {e}")
+        logging.error(f"Failed to submit extrinsic for recording datalog: {e}")
+        return None
+
+
+def send_launch(substrate, seed: str, target_address: str, on_off: bool) -> str or None:
+    """
+    Send Launch command to device
+
+    Parameters
+    ----------
+    substrate : substrate connection instance
+    seed : mnemonic seed of account which writes datalog
+    target_address: device to be triggered with launch
+    on_off : (true == on, false == off)
+
+    Returns
+    -------
+    Hash of the datalog transaction if success
+    """
+
+    # create keypair
+    try:
+        keypair = Keypair.create_from_mnemonic(seed, ss58_format=32)
+    except Exception as e:
+        logging.error(f"Failed to create keypair for sending launch: \n{e}")
+        return None
+
+    try:
+        logging.info("Creating substrate call for sending launch")
+        call = substrate.compose_call(
+            call_module="Launch",
+            call_function="launch",
+            call_params={
+                'robot': target_address,
+                'param': True if on_off else False
+            }
+        )
+        logging.info(f"Successfully created a call for sending launch:\n{call}")
+        logging.info("Creating extrinsic for sending launch")
+        extrinsic = substrate.create_signed_extrinsic(call=call, keypair=keypair)
+    except Exception as e:
+        logging.error(f"Failed to create an extrinsic for sending launch: {e}")
+        return None
+
+    try:
+        logging.info("Submitting extrinsic for sending launch")
+        receipt = substrate.submit_extrinsic(extrinsic, wait_for_inclusion=True)
+        logging.info(f"Extrinsic {receipt.extrinsic_hash} for sending launch sent and included in block {receipt.extrinsic_hash}")
+        return receipt.extrinsic_hash
+    except Exception as e:
+        logging.error(f"Failed to submit extrinsic for sending launch: {e}")
         return None
 
 
@@ -360,3 +415,8 @@ if __name__ == "__main__":
     print(f"Sent datalog transaction hash: {tr_hash}")
     device_written_datalog = get_latest_datalog(substrate, device_addr)
     print(f"Recently written datalog: {device_written_datalog}")
+
+    # test sending launch command to device
+    sent_launch_hash = send_launch(substrate, config["device_account_mnemonic"],
+                                   '5CApRpWX6LFX8u5bT8k9azogrMPF6FBmb6sVR3tLVnfp449D', True)
+    print(sent_launch_hash)

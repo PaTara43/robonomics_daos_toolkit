@@ -12,7 +12,7 @@ Requirements:
 - ```pip3 install -r requirements.txt```
 
 ### 1. Common utils - set of tools to facilitate device integration in Robonomics
-*Read and write yaml, check datalogs, write datalogs, interact with ipfs and digital twins*
+*Read and write yaml, check datalogs, write datalogs, interact with ipfs and digital twins, send launch commands*
 
 This set of functions contains the most widely used for working with Robonomics. Each method has a description, and a common testing script is executed when `common_utils.py` is called. For pinning in IPFS daemon is needed.
 
