@@ -11,13 +11,8 @@ from scalecodec import ScaleBytes
 # set up logging
 logging.basicConfig(
     level=logging.INFO,
-    filename="daemon.log",
     format="%(asctime)s %(levelname)s: %(message)s",
 )
-# logging.basicConfig(
-#     level=logging.INFO,
-#     format="%(asctime)s %(levelname)s: %(message)s",
-# )
 
 
 def read_yaml_file(yaml_path: str) -> tp.Dict or None:
@@ -241,7 +236,8 @@ def write_datalog(substrate, seed: str, data: str) -> str or None:
     try:
         logging.info("Submitting extrinsic for recording datalog")
         receipt = substrate.submit_extrinsic(extrinsic, wait_for_inclusion=True)
-        logging.info(f"Extrinsic {receipt.extrinsic_hash} for recording datalog sent and included in block {receipt.extrinsic_hash}")
+        logging.info(f"Extrinsic {receipt.extrinsic_hash} for recording datalog sent and included "
+                     f"in block {receipt.block_hash}")
         return receipt.extrinsic_hash
     except Exception as e:
         logging.error(f"Failed to submit extrinsic for recording datalog: {e}")
